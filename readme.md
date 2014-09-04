@@ -1,14 +1,14 @@
 #Prepros
-[![Build Status](https://travis-ci.org/sbspk/Prepros.png?branch=master)](https://travis-ci.org/sbspk/Prepros)
 
 Compile less, sass, scss, compass, coffeescript, stylus, jade, slim, markdown, haml and livescript files with live browser refresh.
 
 To Download and learn more visit [alphapixels.com/prepros](http://alphapixels.com/prepros).
 
-![Prepros App](http://alphapixels.com/prepros/img/prepros.jpg)
+![Prepros App](http://alphapixels.com/prepros/static/img/prepros.jpg)
 
 
 ##Features
+
 * Compile less, sass, scss, compass, coffeescript, stylus, jade, slim, markdown, haml and livescript files
 * No dependencies (sass compass etc..)
 * Image optimization

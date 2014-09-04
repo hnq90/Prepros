@@ -6,28 +6,21 @@
  */
 
 
-/*jshint browser: true, node: true*/
+/*jshint browser: true, node: true, curly: false*/
 /*global prepros,  _*/
 
 prepros.factory("watcher", [
 
-    '$filter',
     '$rootScope',
     'config',
     'compiler',
     'fileTypes',
+    'liveServer',
     'notification',
     'projectsManager',
+    'utils',
 
-    function (
-        $filter,
-        $rootScope,
-        config,
-        compiler,
-        fileTypes,
-        notification,
-        projectsManager
-    ) {
+    function ($rootScope, config, compiler, fileTypes, liveServer, notification, projectsManager, utils) {
 
         "use strict";
 
@@ -35,35 +28,54 @@ prepros.factory("watcher", [
             chokidar = require('chokidar'),
             path = require('path');
 
-            var projectsBeingWatched = {};
+        var projectsBeingWatched = {};
 
-        var supported = /\.(:?less|sass|scss|styl|md|markdown|coffee|js|jade|haml|slim|ls)$/gi;
-        var notSupported = /\.(:?png|jpg|jpeg|gif|bmp|woff|ttf|svg|ico|eot|psd|ai|tmp|html|htm|css|rb|php|asp|aspx|cfm|chm|cms|do|erb|jsp|mhtml|mspx|pl|py|shtml|cshtml|cs|vb|vbs|json)$/gi;
+        var supported = /\.(:?less|sass|scss|styl|md|markdown|coffee|js|jade|haml|slim|ls|html|htm|css|rb|php|asp|aspx|cfm|chm|cms|do|erb|jsp|mhtml|mspx|pl|py|shtml|cshtml|cs|vb|vbs|tpl)$/gi;
+        var notSupported = /\.(:?png|jpg|jpeg|gif|bmp|woff|ttf|svg|ico|eot|psd|ai|tmp|json|map)$/gi;
 
 
         function _watch(project) {
 
-            var useExperimentalWatcher =  config.getUserOptions().experimental.fileWatcher;
+            var useExperimentalWatcher = config.getUserOptions().experimental.fileWatcher;
+
+            //Utility Function to compile file
+            var _compileFile = function (file_id) {
+
+                if (project.files[file_id]) {
+
+                    var file = project.files[file_id];
+
+                    if (file.config.autoCompile) {
+
+                        //Compile File
+                        compiler.compile(file.pid, file.id);
+                    }
+
+                    projectsManager.refreshFile(file.pid, file.id, function () {
+                        $rootScope.$apply();
+                    });
+                }
+            };
 
             var watcher = chokidar.watch(project.path, {
-                ignored: function(f) {
+                ignored: function (f) {
 
                     //Ignore dot files or folders
-                    if(/\\\.|\/\./.test(f)) {
+                    if (/\\\.|\/\./.test(f)) {
                         return true;
                     }
 
                     var ext = path.extname(f);
 
-                    if(ext.match(notSupported)) {
+                    if (ext.match(notSupported)) {
 
                         return true;
 
-                    } else if(ext.match(supported)) {
+                    } else if (ext.match(supported)) {
 
                         return false;
 
-                    } else if(projectsManager.matchFilters(project.id, f)) {
+                    } else if (projectsManager.matchFilters(project.id, f)) {
 
                         return true;
 
@@ -71,12 +83,13 @@ prepros.factory("watcher", [
 
                         try {
 
-                            if(fs.statSync(f).isDirectory()) {
+                            if (fs.statSync(f).isDirectory()) {
 
                                 return false;
                             }
 
-                        } catch(e) {}
+                        } catch (e) {
+                        }
                     }
 
                     return true;
@@ -84,68 +97,95 @@ prepros.factory("watcher", [
                 interval: 400,
                 ignorePermissionErrors: true,
                 ignoreInitial: true,
-                usePolling : !useExperimentalWatcher
+                usePolling: !useExperimentalWatcher
             });
 
-            var changeHandler = function(fpath) {
+            var timeOutAdd = function (fpath) {
 
-                if(!fs.existsSync(fpath)) {
-                    return;
+                window.setTimeout(function () {
+
+                    fs.exists(fpath, function (exists) {
+
+                        if (exists && config.getUserOptions().experimental.autoAddRemoveFile) {
+
+                            projectsManager.addFile(project.id, fpath, function () {
+                                $rootScope.$apply();
+                            });
+                        }
+                    });
+
+                }, 2*1000);
+            };
+
+            watcher.on('add', timeOutAdd);
+
+            var timeOutUnlink = function (fpath) {
+
+                window.setTimeout(function () {
+
+                    fs.exists(fpath, function (exists) {
+
+                        if (exists && config.getUserOptions().experimental.autoAddRemoveFile) {
+
+                            $rootScope.$apply(function () {
+                                projectsManager.removeFile(project.id, utils.id(path.relative(project.path, fpath)));
+                            });
+                        }
+                    });
+
+                }, 2*1000);
+            };
+
+            watcher.on('unlink', timeOutUnlink);
+
+            var changeHandler = function (fpath) {
+
+                if (!fs.existsSync(fpath)) return;
+
+                //Do not refresh on preprocessable files except javascript, markdown
+                var isJs = /\.js$/i.test(fpath);
+
+                var isMarkdown = /\.(md|markdown)/i.test(fpath);
+
+                if (project.config.liveRefresh && (!fileTypes.isExtSupported(fpath) || isJs || isMarkdown)) {
+
+                    liveServer.refresh(project.id, fpath, project.config.liveRefreshDelay);
                 }
 
-                if(fileTypes.isExtSupported(fpath)) {
+                //Try to add to files list. if file is not supported project manager will ignore it.
+                if (config.getUserOptions().experimental.autoAddRemoveFile) {
 
-                    _.each(project.files, function(file) {
-
-                        var filePath = $filter('fullPath')(file.input, { basePath: project.path});
-
-                        if(path.relative(filePath, fpath)=== "") {
-
-                            if (file.config.autoCompile) {
-
-                                //Compile File
-                                compiler.compile(file.pid, file.id);
-                            }
-
-                            $rootScope.$apply(function() {
-                                projectsManager.refreshFile(file.pid, file.id);
-                            });
-                        }
+                    projectsManager.addFile(project.id, fpath, function () {
+                        $rootScope.$apply();
                     });
+                }
 
-                    _.each(project.imports, function(imp) {
+                if (fileTypes.isExtSupported(fpath)) {
 
-                        var filePath = $filter('fullPath')(imp.path, { basePath: project.path});
+                    var id = utils.id(path.relative(project.path, fpath));
 
-                        if(path.relative(filePath, fpath)=== "") {
+                    _compileFile(id);
 
-                            _.each(imp.parents, function (parentId) {
+                    if (project.imports[id]) {
 
-                                var parentFile = projectsManager.getFileById(imp.pid, parentId);
+                        var imp = project.imports[id];
 
-                                if (!_.isEmpty(parentFile) && parentFile.config.autoCompile) {
-
-                                    compiler.compile(imp.pid, parentId);
-
-                                    $rootScope.$apply(function() {
-                                        projectsManager.refreshFile(imp.pid, parentId);
-                                    });
-                                }
-                            });
-                        }
-                    });
+                        _.each(imp.parents, function (parent) {
+                            _compileFile(parent);
+                        });
+                    }
                 }
             };
 
-            var debounceChangeHandler = _.debounce(function(fpath) {
+            var debounceChangeHandler = _.debounce(function (fpath) {
 
                 changeHandler(fpath);
 
             }, 75);
 
-            watcher.on('change', function(fpath) {
+            watcher.on('change', function (fpath) {
 
-                if(useExperimentalWatcher) {
+                if (useExperimentalWatcher) {
 
                     return debounceChangeHandler(fpath);
 
@@ -155,8 +195,8 @@ prepros.factory("watcher", [
                 }
             });
 
-            watcher.on('error', function(err) {
-                //Ignore all errors;  there are too many to notify the user
+            watcher.on('error', function (err) {
+                console.log(err);
             });
 
             projectsBeingWatched[project.id] = {
@@ -165,21 +205,21 @@ prepros.factory("watcher", [
             };
         }
 
-        var registerExceptionHandler = _.once(function(projects) {
+        var registerExceptionHandler = _.once(function (projects) {
 
-            //An ugly hack to restart nodejs file watcher when it crashes
-            process.on('uncaughtException', function(err) {
+            //An ugly hack to restart nodejs file watcher whenever it crashes
+            process.on('uncaughtException', function (err) {
 
-                if(/watch EPERM/.test(err.message)) {
+                if (err.message.indexOf('watch ') >= 0) {
 
-                    _.each(projectsBeingWatched, function(project) {
+                    _.each(projectsBeingWatched, function (project) {
 
                         project.watcher.close();
 
                         delete projectsBeingWatched[project.id];
                     });
 
-                    _.each(projects, function(project) {
+                    _.each(projects, function (project) {
                         _watch(project);
                     });
                 }
@@ -194,9 +234,9 @@ prepros.factory("watcher", [
 
             var ids = _.pluck(projects, 'id');
 
-            _.each(projectsBeingWatched, function(project) {
+            _.each(projectsBeingWatched, function (project) {
 
-                if(!_.contains(ids, project.id)) {
+                if (!_.contains(ids, project.id)) {
 
                     project.watcher.close();
 
@@ -204,15 +244,15 @@ prepros.factory("watcher", [
                 }
             });
 
-            _.each(projects, function(project) {
+            _.each(projects, function (project) {
 
-                if((project.id in projectsBeingWatched) && project.config.watch === false) {
+                if ((project.id in projectsBeingWatched) && project.config.watch === false) {
 
                     projectsBeingWatched[project.id].watcher.close();
 
                     delete projectsBeingWatched[project.id];
 
-                } else if(!(project.id in projectsBeingWatched) && project.config.watch !== false) {
+                } else if (!(project.id in projectsBeingWatched) && project.config.watch !== false) {
 
                     _watch(project);
 
